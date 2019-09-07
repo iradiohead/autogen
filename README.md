@@ -99,27 +99,7 @@ gen_project_uplane_all
 
 # Version History
 
-2019-09-04 1.10b2
 
-- NOTICE: Currently all cplane functions may not working correctly!
-- Bug fixes.
-- Add CCSRT (for ABIL) project generation scripts.
-- Add '--preserve' options support to 'cp' command.
-- Use a clean bash and 'source gnb/set_gnb_env.sh' to setup build environments
-  no mater your bash session is clean or not.
-- Use a patch of build script to install and setup hook during sdk preparation
-  process for uplane.
-- Use a temporary workaround to bypass the parsing of uplane bitbake process but
-  the down side is that no external library codes will be included in the
-  generated project.
-
-2019-07-09 1.9
-
-- NOTICE: Currently all cplane functions are not tested!
-- Add multi '-t' '-V' options support to generate project for multi targets.
-- Combine source file properties when possible.
-- Add '-n' option to generate only the config files.
-- Use latest version if no version is given or version of '-1' is given.
 
 2018-11-22 1.8b
 
