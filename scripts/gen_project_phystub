@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# build l2lo
+bash build_phystub.sh
+
+mv command_hook.jsonlogs phystub-hook.jsonlogs
+generator -o phystub -r "$(pwd)" -s fs.snapshot -t libphyStub.so phystub-hook.jsonlogs

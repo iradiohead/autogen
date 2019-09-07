@@ -1,0 +1,26 @@
+diff --git a/uplane/buildscript/prepareSdk/prepare_sdk.sh b/uplane/buildscript/prepareSdk/prepare_sdk.sh
+index 32d8e8cd1f1..69b4092e22c 100644
+--- a/uplane/buildscript/prepareSdk/prepare_sdk.sh
++++ b/uplane/buildscript/prepareSdk/prepare_sdk.sh
+@@ -64,7 +64,21 @@ check_if_target_is_available || return $?
+
+ if [ "${COMPONENT_TO_BUILD}" != "none" ]; then
+     download_prefix_root || return $?
++    ########
++    # Create fs snapshot and replace build tools with hook program.
++    pushd "${GNB_PATH}/.." &>/dev/null
++    logGreen "Creating fs.snapshot ..."
++    fs-snapshot fs.snapshot gnb || exit $?
++    logGreen "Installing tool chain hook ..."
++    install-hook-inplace "${SDK_ROOT_PATH}/prefix-root/toolchain/sysroots/x86_64-oesdk-linux/usr/bin" || exit $?
++    popd &>/dev/null
++    ########
+     setup_environment || return $?
++    ########
++    # Setup hook.
++    logGreen "Setting up hook ..."
++    source "${GNB_PATH}/../setup-hook.env" || exit $?
++    ########
+     logGreen "Compile dependencies"
+     compile_dependencies || return $?
+ else

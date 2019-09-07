@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -e
+
+readonly uuid=$(uuidgen)
+readonly to_delete_dir=".ToDelete_${uuid}"
+
+mkdir -p "${to_delete_dir}"
+
+[[ -d l2-lo/ ]] && mv l2-lo/ "${to_delete_dir}"
+[[ -d l2-hi/ ]] && mv l2-hi/ "${to_delete_dir}"
+[[ -d l2-ps/ ]] && mv l2-ps/ "${to_delete_dir}"
+[[ -d cp-cl/ ]] && mv cp-cl/ "${to_delete_dir}"
+[[ -d cp-if/ ]] && mv cp-if/ "${to_delete_dir}"
+[[ -d cp-nb/ ]] && mv cp-nb/ "${to_delete_dir}"
+[[ -d cp-sb/ ]] && mv cp-sb/ "${to_delete_dir}"
+[[ -d cp-ue/ ]] && mv cp-ue/ "${to_delete_dir}"
+[[ -d cp-rt/ ]] && mv cp-rt/ "${to_delete_dir}"
+[[ -d ccsrt/ ]] && mv ccsrt/ "${to_delete_dir}"
+[[ -d sdk5g/ ]] && mv sdk5g/ "${to_delete_dir}"
+[[ -d hook_bin/ ]] && mv hook_bin/ "${to_delete_dir}"
+
+rm -f setup-hook.env command_hook.jsonlogs fs.snapshot
+
+# run rm command on background
+nohup rm -rf "${to_delete_dir}" &>/dev/null </dev/null &

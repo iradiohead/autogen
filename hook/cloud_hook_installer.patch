@@ -1,0 +1,19 @@
+diff --git a/cplane/scripts/_prepare_sdk.sh b/cplane/scripts/_prepare_sdk.sh
+index 2d6390fed4b..ecdccfa4feb 100755
+--- a/cplane/scripts/_prepare_sdk.sh
++++ b/cplane/scripts/_prepare_sdk.sh
+@@ -75,6 +75,14 @@ function setPrefixRoot()
+         echo "Using existing prefix root: ${PREFIX_ROOT_DIR}"
+     fi
+     set +u
++    ##########
++    # Setup hook after prefix root installed
++    auto_gen_projcet__cwd=$(pwd)
++    cd "${REPO_ROOT}/.."
++    install-hook-inplace "${PREFIX_ROOT_DIR}/usr/bin"
++    cd "${auto_gen_projcet__cwd}"
++    unset auto_gen_projcet__cwd
++    ##########
+     source "${PREFIX_ROOT_DIR}/environment-setup.sh"
+     set -u
+ }

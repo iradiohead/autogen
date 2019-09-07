@@ -17,7 +17,7 @@
 
 **Read the scripts first to make sure what you are doing.**
 
-If you have any problem or concern, feel free to contact the [author](mailto:shiyu.zhou@nokia-sbell.com).
+If you have any problem or concern, feel free to contact the [author](mailto:nokia-sbell.com).
 
 ## Quick guide
 

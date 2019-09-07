@@ -3,8 +3,8 @@
 ##
 # Copyright (c) Nokia 2018. All rights reserved.
 #
-# Author: Zhou, Shiyu (NSB - CN/Hangzhou)
-# Email: shiyu.zhou@nokia-sbell.com
+# Author: 
+# Email: nokia-sbell.com
 #
 
 import copy

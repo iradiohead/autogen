@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Cleaning generated files and git repository..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating cplane project..."
+gen_project_cplane
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating CP-RT project..."
+gen_project_cprt
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "All Done."

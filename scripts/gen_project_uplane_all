@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Cleaning generated files and git repository..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating L2-LO project..."
+gen_project_l2lo
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating L2-HI project..."
+gen_project_l2hi
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating L2-PS project..."
+gen_project_l2ps
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "All Done."

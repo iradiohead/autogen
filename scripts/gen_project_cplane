@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -e
+
+# build cplane
+bash build_cplane.sh
+
+mv command_hook.jsonlogs cplane-hook.jsonlogs
+echo "Generating CP-CL project..."
+generator -o cp-cl -r "$(pwd)" -s fs.snapshot -t cp_cl cplane-hook.jsonlogs
+echo "Generating CP-IF project..."
+generator -o cp-if -r "$(pwd)" -s fs.snapshot -t cp_if cplane-hook.jsonlogs
+echo "Generating CP-NB project..."
+generator -o cp-nb -r "$(pwd)" -s fs.snapshot -t cp_nb cplane-hook.jsonlogs
+echo "Generating CP-SB project..."
+generator -o cp-sb -r "$(pwd)" -s fs.snapshot -t cp_sb cplane-hook.jsonlogs
+echo "Generating CP-UE project..."
+generator -o cp-ue -r "$(pwd)" -s fs.snapshot -t cp_ue cplane-hook.jsonlogs

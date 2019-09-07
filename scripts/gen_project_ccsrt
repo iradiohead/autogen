@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -e
+
+# build CCSRT
+bash build_ccsrt.sh
+
+first_line_of_ccsrt_lib=$(grep -n '"-o","[^"]*libCCSRT\.so"' command_hook.jsonlogs | awk -F ':' '{print $1}' | head -n 1)
+first_line_of_disp_exe=$(grep -n '"-o","[^"]*CCSEmDispatcherExe"' command_hook.jsonlogs | awk -F ':' '{print $1}' | head -n 1)
+first_line_of_daemon_exe=$(grep -n '"-o","[^"]*CCSRTDaemonExe"' command_hook.jsonlogs | awk -F ':' '{print $1}' | head -n 1)
+if [[ ${first_line_of_ccsrt_lib} -gt ${first_line_of_disp_exe} ]]; then
+    cut_line=${first_line_of_ccsrt_lib}
+else
+    cut_line=${first_line_of_disp_exe}
+fi
+if [[ ${cut_line} -lt ${first_line_of_daemon_exe} ]]; then
+    cut_line=${first_line_of_daemon_exe}
+fi
+head -n "${cut_line}" command_hook.jsonlogs > ccsrt_cut-hook.jsonlogs
+
+mv command_hook.jsonlogs ccsrt-hook.jsonlogs
+generator -o ccsrt -r "$(pwd)" -s fs.snapshot ccsrt_cut-hook.jsonlogs \
+    -t CCSRTDaemonExe -V 0 \
+    -t CCSEmDispatcherExe -V 0 \
+    -t libCCSRT.so -V 0

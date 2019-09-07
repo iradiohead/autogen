@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# build cprt
+bash build_cprt.sh
+
+mv command_hook.jsonlogs cprt-hook.jsonlogs
+generator -o cp-rt -r "$(pwd)" -s fs.snapshot -t Cprt cprt-hook.jsonlogs

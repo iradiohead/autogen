@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+
+##
+# Copyright (c) Nokia 2018. All rights reserved.
+#
+# Author: 
+# Email: nokia-sbell.com
+#
+
+import os
+import re
+
+
+pattern_inline = re.compile(r'([^a-zA-Z0-9_]|^)TESTABLE\(([^)]*)\)')
+pattern_end_of_line = re.compile(r'([^a-zA-Z0-9_]|^)TESTABLE\($')
+
+
+def process_file(path):
+    count = 0
+    if not path.endswith(('.c', '.cpp', '.cxx', '.cc', '.h', '.hpp')):
+        return count
+    do_processed = False
+    skip = False
+    in_macro = False
+    data = None
+    new_lines = list()
+    with open(path, 'r') as f:
+        try:
+            data = f.read()
+        except:
+            skip = True
+    if not skip or not data:
+        lines = data.split('\n')
+        if '\r' in lines:
+            skip = True
+        else:
+            for line in lines:
+                new_line = line
+                if in_macro:
+                    do_processed = True
+                    p = new_line.find(')')
+                    if p >= 0:
+                        v = new_line[:p]
+                        if '(' in v or '//' in v or '\\*' in v:
+                            skip = True
+                            break
+                        new_line = new_line[:p] + new_line[p + 1:]
+                        in_macro = False
+                    else:
+                        if '(' in new_line or '//' in new_line or '\\*' in new_line:
+                            skip = True
+                            break
+                        if line != new_line:
+                            print('-' + line, flush=True)
+                            print('+' + new_line, flush=True)
+                            print('')
+                        new_lines.append(new_line)
+                        continue
+                if not new_line or new_line[-1] == '\\':
+                    new_lines.append(new_line)
+                    continue
+                string = new_line.strip()
+                if not string or string[0] == '#':
+                    new_lines.append(new_line)
+                    continue
+                while True and not skip:
+                    result = pattern_inline.search(new_line)
+                    if not result:
+                        break
+                    do_processed = True
+                    span = list(result.span())
+                    span[0] += len(result.group(1))
+                    if '(' in result.group(2):
+                        skip = True
+                    new_line = new_line[:span[0]] + result.group(2) + new_line[span[1]:]
+                    count += 1
+                new_line_strip = new_line.rstrip()
+                if pattern_end_of_line.search(new_line_strip):
+                    new_line = new_line_strip[:-9]
+                    do_processed = True
+                    in_macro = True
+                    count += 1
+                if skip:
+                    break
+                if line != new_line:
+                    print('-' + line, flush=True)
+                    print('+' + new_line, flush=True)
+                    print('')
+                new_lines.append(new_line)
+    if skip:
+        print('File not supported: ' + path)
+        return 0
+    if do_processed:
+        new_data = '\n'.join(new_lines)
+        with open(path, 'w') as f:
+            f.write(new_data)
+    return count
+
+
+def process_dir(path):
+    count = 0
+    filelist = sorted(os.listdir(path))
+    for filename in filelist:
+        filepath = os.path.join(path, filename)
+        realpath = filepath
+        if os.path.islink(filepath):
+            realpath = os.path.realpath(filepath)
+        if os.path.isdir(realpath):
+            count += process_dir(filepath)
+        elif not os.path.isfile(realpath):
+            continue
+        count += process_file(filepath)
+    return count
+
+
+if __name__ == '__main__':
+    tcount = process_dir(os.getcwd())
+    print('Removed', tcount)

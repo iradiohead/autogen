@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Cleaning generated files and git repository..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating L2-HI project..."
+gen_project_l2hi
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating GtpuGen project..."
+gen_project_gtpugen
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating L2-LO project..."
+gen_project_l2lo
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating phyStub project..."
+gen_project_phystub
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "Generating schStub project..."
+gen_project_schstub
+echo "Cleaning up..."
+gen_project_clean_background
+cd gnb
+git-do-clean
+cd ..
+
+echo "All Done."

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# build l2lo
+bash build_schstub.sh
+
+mv command_hook.jsonlogs schstub-hook.jsonlogs
+generator -o schstub -r "$(pwd)" -s fs.snapshot -t libschStub.so schstub-hook.jsonlogs

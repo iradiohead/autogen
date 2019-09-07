@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -e
+
+rm -rf l2-lo/ l2-hi/ l2-ps/ cp-cl/ cp-if/ cp-nb/ cp-sb/ cp-ue/ cp-rt/ ccsrt/
+rm -rf sdk5g/ hook_bin/ setup-hook.env command_hook.jsonlogs fs.snapshot

@@ -3,8 +3,8 @@
 ##
 # Copyright (c) Nokia 2018. All rights reserved.
 #
-# Author: Zhou, Shiyu (NSB - CN/Hangzhou)
-# Email: shiyu.zhou@nokia-sbell.com
+# Author: 
+# Email: nokia-sbell.com
 #
 
 from path_helper import join, get_base_name, get_dir_name, get_abs_path

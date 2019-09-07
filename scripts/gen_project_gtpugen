@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+# build l2hi
+bash build_gtpugen.sh
+
+mv command_hook.jsonlogs gtpugen-hook.jsonlogs
+generator -o gtpugen -r "$(pwd)" -s fs.snapshot -t libGtpuGen.so gtpugen-hook.jsonlogs
+

@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+
+##
+# Copyright (c) Nokia 2018. All rights reserved.
+#
+# Author: 
+# Email: nokia-sbell.com
+#
+
+import os
+import sys
+import stat
+import getpass
+import subprocess
+
+from config import commands_to_hook, do_not_hook, hook_install_dir, logfile, hook_bin_dir, hook_program
+
+
+def get_command_result(cmd, expect_error=False, hide_stderr=False):
+    if hide_stderr:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    if (not expect_error) and (result.returncode != 0):
+        print('Error running command: ' + str(cmd))
+        print('Return code: {:d}'.format(result.returncode))
+        exit(1)
+    return result.stdout.decode('utf-8'), result.returncode
+
+
+def run_command(cmd):
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print('Error running command: ' + str(cmd))
+        print('Return code: {:d}'.format(result.returncode))
+        exit(1)
+
+
+def compile_hook():
+    run_command(['gcc', '-Wall', '-O3', '-DLOCK_FILE="/tmp/hooklogging_' + getpass.getuser() + '.lck"', '-o',
+                 hook_program, hook_program + '.c'])
+
+
+def install_hook(cmd, target):
+    hook_bin = os.path.join(hook_bin_dir, cmd)
+    run_command(['cp', '-p', hook_program, hook_bin])
+    with open(hook_bin + '.target', 'w') as f:
+        f.write(target)
+
+
+def get_command_path(cmd):
+    path, code = get_command_result(['which', cmd], True, True)
+    if code != 0:
+        return None
+    return path.rstrip()
+
+
+def install_commands(commands):
+    for cmd in commands:
+        path = get_command_path(cmd)
+        if not path:
+            print('{:s} command not found. skip...'.format(cmd))
+            continue
+        install_hook(cmd, path)
+
+
+def find_commands_in_same_folder(cmd):
+    commands = list()
+    path = get_command_path(cmd)
+    if not path:
+        print('{:s} command not found. skip...'.format(cmd))
+        return commands
+
+
+
+def main():
+    compile_hook()
+    if not os.path.exists(hook_bin_dir):
+        os.makedirs(hook_bin_dir)
+
+    if len(sys.argv) > 1:
+        paths = sys.argv[1:]
+        executables = []
+        targets = {}
+        for path in paths:
+            if os.path.isdir(path):
+                try:
+                    filelist = sorted(os.listdir(path))
+                except:
+                    continue
+                for filename in filelist:
+                    filepath = os.path.join(path, filename)
+                    if os.path.islink(filepath):
+                        filepath = os.path.realpath(filepath)
+                    if not os.path.isfile(filepath):
+                        continue
+                    try:
+                        st = os.stat(filepath)
+                    except:
+                        continue
+                    mode = st.st_mode
+                    if not mode & stat.S_IXUSR:
+                        continue
+                    if (filename not in executables) and (filename not in do_not_hook):
+                        executables.append(filename)
+                        targets[filename] = filepath
+                    else:
+                        continue
+            else:
+                install_commands((path,))
+        for command in executables:
+            install_hook(command, targets[command])
+    else:
+        install_commands(commands_to_hook)
+
+    with open(os.path.join(hook_bin_dir, 'hooklog.conf'), 'w') as f:
+        f.write(logfile)
+
+    with open('setup-hook.env', 'w') as f:
+        f.write('#!/bin/false\n')
+        f.write('export PATH=' + hook_bin_dir + ':$PATH\n')
+        f.write('export HOOK_ENABLED=yes\n')
+        f.write('export HOOK_ENV=' + os.path.join(hook_install_dir, 'setup-hook.env') + '\n')
+        f.write('export HOOK_SESSION=' + getpass.getuser() + '\n')
+        f.write('echo "Hook setup success."' + '\n')
+
+
+if __name__ == '__main__':
+    main()

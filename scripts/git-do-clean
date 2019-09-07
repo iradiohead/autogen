@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -e
+
+git clean -ffdx
+git submodule foreach --recursive git clean -ffdx

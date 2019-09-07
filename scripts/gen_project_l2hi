@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -e
+
+# build l2hi
+env -i \
+    LC_PAPER="${LC_PAPER}" XDG_SESSION_ID="${XDG_SESSION_ID}" LC_ADDRESS="${LC_ADDRESS}" HOSTNAME="${HOSTNAME}" \
+    LC_MONETARY="${LC_MONETARY}" TERM="${TERM}" SHELL="${SHELL}" PARALLEL_BUILD_JOBS="${PARALLEL_BUILD_JOBS}" \
+    HISTSIZE="${HISTSIZE}" SSH_CLIENT="${SSH_CLIENT}" LC_NUMERIC="${LC_NUMERIC}" SSH_TTY="${SSH_TTY}" \
+    QT_GRAPHICSSYSTEM_CHECKED="${QT_GRAPHICSSYSTEM_CHECKED}" http_proxy="${http_proxy}" USER="${USER}" \
+    LS_COLORS="${LS_COLORS}" LC_TELEPHONE="${LC_TELEPHONE}" FTP_PROXY="${FTP_PROXY}" ftp_proxy="${ftp_proxy}" \
+    ARMLMD_LICENSE_FILE="${ARMLMD_LICENSE_FILE}" MAIL="${MAIL}" PATH="${PATH}" WRSD_LICENSE_FILE="${WRSD_LICENSE_FILE}" \
+    JETBRAINS_LICENSE_SERVER="${JETBRAINS_LICENSE_SERVER}" LC_IDENTIFICATION="${LC_IDENTIFICATION}" \
+    INPUTRC="${INPUTRC}" PWD="${PWD}" LANG="${LANG}" KDEDIRS="${KDEDIRS}" LC_MEASUREMENT="${LC_MEASUREMENT}" \
+    PS1="${PS1}" HTTPS_PROXY="${HTTPS_PROXY}" https_proxy="${https_proxy}" SHLVL="${SHLVL}" HOME="${HOME}" \
+    HTTP_PROXY="${HTTP_PROXY}" LOGNAME="${LOGNAME}" CVS_RSH="${CVS_RSH}" XDG_DATA_DIRS="${XDG_DATA_DIRS}" \
+    SSH_CONNECTION="${SSH_CONNECTION}" LESSOPEN="${LESSOPEN}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+    QT_PLUGIN_PATH="${QT_PLUGIN_PATH}" LC_TIME="${LC_TIME}" WS_LICENSE_FILE="${WS_LICENSE_FILE}" LC_NAME="${LC_NAME}" \
+    bash build_l2hi.sh
+
+mv command_hook.jsonlogs l2hi-hook.jsonlogs
+generator -o l2-hi -r "$(pwd)" -s fs.snapshot -t lib5gl2hi.so l2hi-hook.jsonlogs
+cd l2-hi
+remove-macro
+cd ..
+tar cJf l2-hi_no-testable.txz l2-hi/
