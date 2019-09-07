@@ -1,0 +1,6 @@
+/venv
+/.idea/workspace.xml
+/.idea/libraries/
+**/.DS_Store
+__pycache__/
+hook/hook

@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+
+##
+# Copyright (c) Nokia 2018. All rights reserved.
+#
+# Author: Zhou, Shiyu (NSB - CN/Hangzhou)
+# Email: shiyu.zhou@nokia-sbell.com
+#
+
+import os
+import sys
+import json
+import shlex
+import subprocess
+import multiprocessing
+
+import vfs
+from path_helper import join, get_base_name, get_dir_name, get_relative_path
+
+import cmd_cp
+import cmd_ln
+import cmd_rm
+import cmd_mkdir
+import cmd_gcc
+import cmd_ar
+
+
+def load_fs_snapshot(path):
+    if not os.path.isfile(path):
+        print('ERROR: snapshot file not found.')
+        return
+    print('loading fs_snapshot...', end='', flush=True)
+    with open(path, 'r') as f:
+        file_list = eval(f.read())
+    for item in file_list:
+        item_type = item[0]
+        if item_type == 'f':
+            virtual_fs.create_new_file(item[1])
+        elif item_type == 'd':
+            virtual_fs.mkdir(item[1])
+        elif item_type == 'l':
+            virtual_fs.mklink(item[1], item[2])
+        elif item_type == 'p':
+            virtual_fs.mkdirs(item[1])
+        else:
+            raise ValueError('unknown item type {:s}.'.format(item_type))
+    print(' ok', flush=True)
+
+
+def ignored_command(fs, target, cmd, cwd, env):
+    command = get_base_name(cmd[0])
+    if command not in ignored_cmd_set:
+        print('ignored command: ' + command, flush=True)
+        ignored_cmd_set.add(command)
+    return None, None
+
+
+def not_implemented_command(fs, target, cmd, cwd, env):
+    print('not implemented: ' + str(cmd), flush=True)
+    return None, None
+
+
+def run_command(cmd):
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print('Error running command: ' + str(cmd))
+        print('Return code: {:d}'.format(result.returncode))
+
+
+def output_dot_node(f, target, root, dependency_tree):
+    global node_count
+    if target not in node_map:
+        node_count += 1
+        node_map[target] = node_count
+        color = 'Red'
+        if target not in dependency_tree:
+            color = 'Green'
+        elif not dependency_tree[target]:
+            color = 'Black'
+        elif target[0][-2:].lower() == '.o':
+            color = 'Gray'
+        elif target[0][-2:].lower() == '.a':
+            color = 'Purple'
+        node_name = get_relative_path(root, target[0])
+        if not node_name:
+            node_name = target[0]
+            color = 'Red'
+        if target[1]:
+            node_name += ':' + str(target[1])
+        f.write('    node{:06d} [label="{:s}", color={:s}];\n'.format(node_count, node_name, color))
+    if target in dependency_tree:
+        for dep in dependency_tree[target]:
+            output_dot_node(f, dep, root, dependency_tree)
+            if dep[0][:3] == 'lib'.lower() and dep[0][-3:].lower() == '.so':
+                f.write('    node{:06d} -> node{:06d} [style="dashed"];\n'.format(node_map[dep], node_map[target]))
+            else:
+                f.write('    node{:06d} -> node{:06d};\n'.format(node_map[dep], node_map[target]))
+
+
+def generate_dot_graph(targets, root, dependency_tree, tmp_dir):
+    with open(join(tmp_dir, 'compile_path.dot'), 'w') as dotf:
+        dotf.write('digraph compile_path {\n')
+        dotf.write('    rankdir=RL;\n')
+        dotf.write('    overlap=scale;\n')
+        dotf.write('    concentrate=true;\n')
+        for target in targets:
+            output_dot_node(dotf, target, root, dependency_tree)
+        dotf.write('}\n')
+
+
+def _gen_compile_config(fs, target, root, tmp_dir):
+    src_list = list()
+    config_data = fs.get_version_file(target[0], target[1]).get_extra_data_ref().value
+    if config_data.get_only_do_preprocessing():
+        raise ValueError('invalid -E option')
+    for src in config_data.get_input_files():
+        if src[0].endswith(('.c', '.cpp', '.cxx', '.cc')):
+            rpath = get_relative_path(root, src[0])
+            if rpath:
+                src_list.append('${CMAKE_CURRENT_SOURCE_DIR}/' + rpath)
+            else:
+                print('ignore absolute src path: ' + src[0])
+    gcc_program = config_data.get_command_name()
+    if gcc_program[-7:] == '-hooked':
+        gcc_program = gcc_program[:-7]
+    macros_file = '{:s}_macros.h'.format(get_base_name(gcc_program))
+    macros_file_path = join(tmp_dir, macros_file)
+    if not os.path.exists(macros_file_path):
+        with open(macros_file_path, 'w') as f:
+            f.write(cmd_gcc.get_command_macros(config_data.get_command_name()))
+    src_config = '-nostdinc -nostdinc++ -undef -imacros ${CMAKE_CURRENT_SOURCE_DIR}/' + macros_file
+    if config_data.get_sysroot():
+        rpath = get_relative_path(root, config_data.get_sysroot())
+        if rpath:
+            src_config += ' --sysroot=${CMAKE_CURRENT_SOURCE_DIR}/' + shlex.quote(rpath)
+        else:
+            print('ignore absolute sysroot path: ' + config_data.get_sysroot())
+    for path in config_data.get_include_dirs():
+        rpath = get_relative_path(root, path)
+        if rpath:
+            src_config += ' -I${CMAKE_CURRENT_SOURCE_DIR}/' + shlex.quote(rpath)
+        else:
+            print('ignore absolute path: ' + path)
+    for path in config_data.get_sys_include_dirs():
+        rpath = get_relative_path(root, path)
+        if rpath:
+            src_config += ' -isystem ${CMAKE_CURRENT_SOURCE_DIR}/' + shlex.quote(rpath)
+        else:
+            print('ignore absolute path: ' + path)
+    for path in config_data.get_default_include_dirs():
+        rpath = get_relative_path(root, path)
+        if rpath:
+            src_config += ' -I${CMAKE_CURRENT_SOURCE_DIR}/' + shlex.quote(rpath)
+        else:
+            print('ignore absolute path: ' + path)
+    for path in config_data.get_default_sys_include_dirs():
+        rpath = get_relative_path(root, path)
+        if rpath:
+            src_config += ' -isystem ${CMAKE_CURRENT_SOURCE_DIR}/' + shlex.quote(rpath)
+        else:
+            print('ignore absolute path: ' + path)
+    for define in config_data.get_define_undef():
+        src_config += ' ' + shlex.quote(define)
+    if config_data.get_c_cpp_std():
+        src_config += ' -std=' + shlex.quote(config_data.get_c_cpp_std())
+    for header_file in config_data.get_include_files():
+        src_config += ' -include ' + shlex.quote(header_file)
+    for option in config_data.get_other_options():
+        if '-Werror' == option:
+            continue
+        src_config += ' ' + shlex.quote(option)
+    src_config = src_config.replace('\\', '\\\\').replace('"', '\\"')
+    return src_list, src_config
+
+
+def _gen_cmake_target(fs, target, root, dependency_tree, f, tmp_dir):
+    global __generator__generated_target_map_to_name
+    if '__generator__generated_target_map_to_name' not in globals():
+        __generator__generated_target_map_to_name = dict()
+    global __generator__generated_target_names
+    if '__generator__generated_target_names' not in globals():
+        __generator__generated_target_names = set()
+    if target not in dependency_tree:
+        return None
+    src_list = list()
+    src_config_list = list()
+    lib_list = list()
+    target_name = get_base_name(target[0])
+    target_type = 'exe'
+    if '.' in target_name:
+        if target_name[-2:].lower() == '.a':
+            if target_name[:3].lower() == 'lib':
+                target_name = target_name[3:-2]
+            else:
+                target_name = target_name[:-2]
+            target_type = 'a'
+        elif target_name[-3:].lower() == '.so':
+            if target_name[:3].lower() == 'lib':
+                target_name = target_name[3:-3]
+            else:
+                target_name = target_name[:-3]
+            target_type = 'so'
+        else:
+            raise NotImplementedError('target `{:s}` not supported.'.format(target_name))
+    for dep in dependency_tree[target]:
+        if dep[0][0] != '/':
+            continue
+        if dep[0].endswith(('.a', '.so')):
+            lib_name = _gen_cmake_target(fs, dep, root, dependency_tree, f, tmp_dir)
+            if lib_name:
+                lib_list.append(lib_name)
+        elif dep[0][-2:].lower() == '.o':
+            src_files, src_file_config = _gen_compile_config(fs, dep, root, tmp_dir)
+            for src in src_files:
+                src_list.append(src)
+                src_config_list.append(src_file_config)
+        else:
+            raise NotImplementedError('cmake rules for `{:s}` in .{:s} file not implemented.'.format(dep[0],
+                                                                                                     target_type))
+    if not src_list:
+        empty_src_file = join(tmp_dir, 'empty.cpp')
+        if not os.path.exists(empty_src_file):
+            with open(empty_src_file, 'w') as fout:
+                fout.write('#define THIS_IS_A_EMPTY_SOURCE_FILE\n')
+        src_list.append('${CMAKE_CURRENT_SOURCE_DIR}/empty.cpp')
+        src_config_list.append('')
+    # use a already defined target
+    generated_target = (tuple(src_list), tuple(src_config_list), tuple(lib_list))
+    if generated_target in __generator__generated_target_map_to_name:
+        return __generator__generated_target_map_to_name[generated_target]
+    # rename if needed
+    if target_name in __generator__generated_target_names:
+        i = 2
+        while True:
+            new_name = '{:s}_{:d}'.format(target_name, i)
+            if new_name not in __generator__generated_target_names:
+                break
+            i += 1
+        target_name = new_name
+    # write target to file
+    if target_type == 'a':
+        f.write('add_library({:s} STATIC'.format(target_name))
+    elif target_type == 'so':
+        f.write('add_library({:s} SHARED'.format(target_name))
+    else:
+        f.write('add_executable(' + target_name)
+    for src in src_list:
+        f.write(' ' + src)
+    f.write(')\n')
+    # write src config to file
+    combine_config = True
+    last_config = src_config_list[0]
+    src_count = len(src_list)
+    for i in range(1, src_count):
+        if last_config != src_config_list[i]:
+            combine_config = False
+            break
+    if combine_config and src_config_list[0]:
+        f.write('set_target_properties({:s} PROPERTIES COMPILE_FLAGS "{:s}")\n'.format(target_name, src_config_list[0]))
+    else:
+        for i in range(src_count):
+            if not src_config_list[i]:
+                continue
+            f.write('set_source_files_properties({:s} PROPERTIES COMPILE_FLAGS "{:s}")\n'.format(src_list[i],
+                                                                                             src_config_list[i]))
+    if lib_list:
+        f.write('target_link_libraries(' + target_name)
+        for lib in lib_list:
+            f.write(' ' + lib)
+        f.write(')\n')
+    __generator__generated_target_names.add(target_name)
+    __generator__generated_target_map_to_name[generated_target] = target_name
+    return target_name
+
+
+def generate_cmake_lists(fs, targets, root, dependency_tree, tmp_dir):
+    target_name = get_base_name(targets[0][0])
+    if '.' in target_name:
+        if target_name[-2:].lower() == '.a':
+            if target_name[:3].lower() == 'lib':
+                target_name = target_name[3:-2]
+            else:
+                target_name = target_name[:-2]
+        elif target_name[-3:].lower() == '.so':
+            if target_name[:3].lower() == 'lib':
+                target_name = target_name[3:-3]
+            else:
+                target_name = target_name[:-3]
+        else:
+            raise NotImplementedError('target `{:s}` not supported.'.format(target_name))
+    with open(join(tmp_dir, 'CMakeLists.txt'), 'w') as f:
+        f.write('cmake_minimum_required(VERSION 3.10)\n')
+        f.write('set(CMAKE_C_COMPILER "gcc")\n')
+        f.write('set(CMAKE_CXX_COMPILER "g++")\n')
+        f.write('project({:s})\n\n'.format(target_name))
+        for target in targets:
+            _gen_cmake_target(fs, target, root, dependency_tree, f, tmp_dir)
+
+
+def _worker_gen_file_dep(job):
+    file = job[0][0]
+    config = job[1]
+    cmd = config.gen_command_string_without_input_output(sort_options=False)
+    cmd = '{:s} {:s} -M -E {:s}'.format(shlex.quote(config.get_command_name()), cmd, shlex.quote(file))
+    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Exception('error gcc return code: {:d}'.format(result.returncode))
+    dep_output = result.stdout.decode('utf-8').splitlines()
+    dep_string = ''
+    for dep in dep_output:
+        if not dep:
+            continue
+        line = dep[(dep.find(':') + 1):]
+        if line[-2:] == ' \\':
+            line = line[:-2]
+        dep_string += ' ' + line.strip()
+    file_list = shlex.split(dep_string)
+    return file_list
+
+
+def _worker_get_real_path(job):
+    result = subprocess.run(['readlink', '-f', job], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        print('ERROR: cannot get real path of: ' + job)
+        return ''
+    return result.stdout.decode('utf-8').strip()
+
+
+def generate_all_src_file_list(fs, dependency_tree):
+    job_list = list()
+    result_set = set()
+    for key in dependency_tree.keys():
+        file_extra_data = fs.get_version_file(key[0], key[1]).get_extra_data_ref().value
+        for file in dependency_tree[key]:
+            file_name = file[0]
+            if file_name.endswith(('.c', '.cpp', '.cxx', '.cc')):
+                job_list.append((file, file_extra_data))
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+        files_set = set()
+        for output in pool.imap_unordered(_worker_gen_file_dep, job_list):
+            print('.', flush=True, end='')
+            for file in output:
+                if not file:
+                    continue
+                files_set.add(file)
+        print(' ok\nResolving path', flush=True, end='')
+        for output in pool.imap_unordered(_worker_get_real_path, list(files_set)):
+            print('.', flush=True, end='')
+            if not output:
+                continue
+            result_set.add(output)
+    return sorted(result_set)
+
+
+def _worker_cp_file(job):
+    run_command(['cp', '-p', job[0], join(job[1], get_relative_path(job[2], job[0]))])
+    return '.'
+
+
+def generate_project_archive(file_list, root, tmp_dir):
+    print('Creating dirs', flush=True, end='')
+    dir_set = set()
+    for path in file_list:
+        rpath = get_relative_path(root, get_dir_name(path))
+        if rpath:
+            dir_set.add(join(tmp_dir, rpath))
+    for path in dir_set:
+        run_command(['mkdir', '-p', path])
+        print('.', flush=True, end='')
+    print(' ok\nCopying files', flush=True, end='')
+    job_list = list()
+    for path in file_list:
+        job_list.append((path, tmp_dir, root))
+    with multiprocessing.Pool(processes=16) as pool:
+        for output in pool.imap_unordered(_worker_cp_file, job_list):
+            print(output, flush=True, end='')
+    print(' ok\nArchiving project...', flush=True, end='')
+    run_command(['tar', 'cJf', get_base_name(tmp_dir) + '.txz', tmp_dir])
+    print(' ok', flush=True)
+
+
+def generate_project_tree(fs: vfs.VFs, target, dependency_tree, project_tree=None):
+    if project_tree is None:
+        project_tree = dict()
+    else:
+        if target in project_tree:
+            return project_tree
+    if target in dependency_tree:
+        dependency_obj = set()
+        dependency_lib = set()
+        dependency_other = set()
+        file_extra_data = fs.get_version_file(target[0], target[1]).get_extra_data_ref().value
+        if target[0].endswith('.a'):
+            dep_list = file_extra_data.get_list()
+        elif target[0].endswith('.o'):
+            dep_list = file_extra_data.get_dep_list()
+        elif type(file_extra_data) is cmd_gcc.GccConfig:
+            dep_list = file_extra_data.get_dep_list()
+        else:
+            dep_list = dependency_tree[target]
+        for dep in dep_list:
+            if dep[0][0] == '/':
+                dep_file = fs.get_version_file(dep[0], dep[1])
+                copy_src = dep_file.get_copy_src()
+                if copy_src:
+                    dep = copy_src
+            if dep[0].endswith('.o'):
+                dependency_obj.add(dep)
+            elif dep[0].endswith('.a'):
+                if dep not in dependency_tree:
+                    lib_name = get_base_name(dep[0])
+                    lib_path = None
+                    lib_version = -1
+                    for item in dependency_tree.keys():
+                        if get_base_name(item[0]) == lib_name:
+                            if lib_version < item[1]:
+                                lib_version = item[1]
+                                lib_path = item[0]
+                    if lib_path:
+                        print('Found missing target {:s}:{:d} -> {:s}:{:d}'.format(dep[0], dep[1], lib_path,
+                                                                                   lib_version))
+                        dep = (lib_path, lib_version)
+                dependency_lib.add(dep)
+            else:
+                dependency_other.add(dep)
+        target_dep_list = list(sorted(dependency_obj))
+        target_dep_list.extend(sorted(dependency_lib))
+        target_dep_list.extend(sorted(dependency_other))
+        for dep in target_dep_list:
+            generate_project_tree(fs, dep, dependency_tree, project_tree)
+        project_tree[target] = target_dep_list
+    return project_tree
+
+
+def print_usage():
+    print('Usage: {:s} [-[orstV] value]... LOG_FILE'.format(sys.argv[0]))
+    print('')
+    print('  -o <output dir>')
+    print('  -r <root path>')
+    print('  -s <snapshot file>')
+    print('  -t <generate target>')
+    print('  -V <target version>')
+    print('  -n')
+    print('')
+    exit(1)
+
+
+def main(argv):
+    argc = len(argv)
+    generate_target = None
+    generate_target_version = -1
+    generate_target_list = list()
+    root_dir = None
+    tmp_dir = 'generated'
+    snapshot_file = None
+    log_file_path = None
+    only_generate_configs = False
+    if argc < 2:
+        print_usage()
+    pos = 1
+    while pos < argc:
+        pos_shift = 1
+        if argv[pos][0] == '-':
+            arg = argv[pos][1]
+            pos += 1
+            if arg == 'r':
+                root_dir = str(argv[pos])
+            elif arg == 'n':
+                only_generate_configs = True
+                pos_shift = 0
+            elif arg == 't':
+                if generate_target:
+                    generate_target_list.append((generate_target, generate_target_version))
+                    generate_target_version = -1
+                generate_target = str(argv[pos])
+            elif arg == 'V':
+                if not generate_target:
+                    print('-V : set file version to unknown target')
+                    print_usage()
+                generate_target_version = int(argv[pos])
+            elif arg == 'o':
+                tmp_dir = str(argv[pos])
+            elif arg == 's':
+                snapshot_file = str(argv[pos])
+        else:
+            if not log_file_path:
+                log_file_path = str(argv[pos])
+            else:
+                print('log file already given.')
+                print_usage()
+        pos += pos_shift
+    if generate_target:
+        generate_target_list.append((generate_target, generate_target_version))
+    if not log_file_path:
+        print('No log file given.')
+        print_usage()
+    if generate_target_list and not root_dir:
+        print('No root path given.')
+        print_usage()
+
+    if snapshot_file:
+        load_fs_snapshot(snapshot_file)
+    print('Loading command hook log...', flush=True)
+    dependency_tree = dict()
+    with open(log_file_path, 'r') as log_file:
+        for log_json in log_file:
+            log = json.loads(log_json)
+            command = get_base_name(log['hookProg'])
+            # simulate commands
+            if command not in command_funcs:
+                raise NotImplementedError('unknown command {:s}'.format(command))
+            output_files, input_files = command_funcs[command](virtual_fs, log['hookedProg'], log['cmd'], log['cwd'],
+                                                               log['envs'])
+            if not output_files:
+                continue
+            # noinspection PyTypeChecker
+            if len(output_files) == 1:
+                # noinspection PyTypeChecker
+                dependency_tree[output_files[0]] = set(input_files)
+            elif len(output_files) == len(input_files):
+                # noinspection PyTypeChecker
+                for i in range(len(output_files)):
+                    if output_files[i] not in dependency_tree:
+                        dependency_tree[output_files[i]] = set()
+                    dependency_tree[output_files[i]].add(input_files[i])
+            else:
+                raise NotImplementedError('multi output_files')
+    print('Loading finished.', flush=True)
+    # find all targets
+    all_targets_found = True
+    targets_id_list = list()
+    if generate_target_list:
+        for generate_target in generate_target_list:
+            target_id = None
+            for target in dependency_tree.keys():
+                if target[0].endswith(generate_target[0]):
+                    if generate_target[1] == -1:
+                        target_id = target
+                    else:
+                        if target[1] == generate_target[1]:
+                            target_id = target
+                            break
+            if not target_id:
+                all_targets_found = False
+                break
+            targets_id_list.append(target_id)
+    else:
+        all_targets_found = False
+    # list all targets
+    if not all_targets_found:
+        target_list = list()
+        for target in dependency_tree.keys():
+            target_name = target[0]
+            target_version = target[1]
+            target_file = virtual_fs.get_version_file(target_name, target_version)
+            target_base_name = target_file.get_base_name()
+            if target_base_name == 'a.out' or target_base_name.startswith('cmTC_') \
+                    or target_name.find('CMakeFiles/cmTC_') >= 0 or target_base_name.endswith(('.o', '.map')) \
+                    or target_file.get_copy_src():
+                continue
+            target_name = get_relative_path(root_dir, target_name)
+            if target_version:
+                target_list.append(target_name + ':' + str(target_version))
+            else:
+                target_list.append(target_name)
+        target_list = sorted(target_list)
+        print('\n\nAll output targets:', flush=True)
+        for target in target_list:
+            print(target, flush=True)
+    else:
+        run_command(['rm', '-rf', tmp_dir])
+        run_command(['mkdir', '-p', tmp_dir])
+        # generate project tree
+        print('\n\nGenerating project tree...', flush=True, end='')
+        project_tree = None
+        for target_id in targets_id_list:
+            project_tree = generate_project_tree(virtual_fs, target_id, dependency_tree, project_tree)
+        print(' ok', flush=True)
+        # generate compile path graph
+        print('Generating compile_path.dot ...', flush=True, end='')
+        generate_dot_graph(targets_id_list, root_dir, project_tree, tmp_dir)
+        print(' ok', flush=True)
+        # generate CMakeLists.txt
+        print('Generating CMakeLists.txt ...', flush=True, end='')
+        generate_cmake_lists(virtual_fs, targets_id_list, root_dir, project_tree, tmp_dir)
+        print(' ok', flush=True)
+        if only_generate_configs:
+            return
+        # generate source file list
+        print('Generating source file list', flush=True, end='')
+        all_file_list = generate_all_src_file_list(virtual_fs, project_tree)
+        print(' ok', flush=True)
+        generate_project_archive(all_file_list, root_dir, tmp_dir)
+
+
+ignored_cmd_set = set()
+command_funcs = {
+    'cp': cmd_cp.run,
+    'mv': not_implemented_command,
+    'ln': cmd_ln.run,
+    'mkdir': cmd_mkdir.run,
+    'rm': cmd_rm.run,
+    'gcc': cmd_gcc.run,
+    'g++': cmd_gcc.run,
+    'x86_64-pc-linux-gnu-gcc': cmd_gcc.run,
+    'x86_64-pc-linux-gnu-g++': cmd_gcc.run,
+    'x86_64-pc-linux-gnu-ar': cmd_ar.run,
+    'ar': cmd_ar.run,
+    'gcc-ar': cmd_ar.run,
+    'as': not_implemented_command,
+    'cc': not_implemented_command,
+    'ld': not_implemented_command,
+    'python': ignored_command,
+    'python2': ignored_command,
+    'python3': ignored_command,
+    'python3.6': ignored_command,
+    'x86_64-pc-linux-gnu-ld': not_implemented_command,
+    'x86_64-pc-linux-gnu-nm': not_implemented_command,
+    'x86_64-pc-linux-gnu-objcopy': not_implemented_command,
+    'x86_64-pc-linux-gnu-objdump': not_implemented_command,
+    'x86_64-pc-linux-gnu-strip': not_implemented_command,
+    'x86_64-pc-linux-gnu-ranlib': ignored_command,
+    'ranlib': ignored_command,
+    'java': ignored_command,
+    'strings': not_implemented_command,
+    'valgrind': not_implemented_command,
+    'install': not_implemented_command,
+    'rsync': not_implemented_command,
+    'protoc': ignored_command
+}
+
+virtual_fs = vfs.VFs()
+node_map = dict()
+node_count = 0
+
+
+if __name__ == '__main__':
+    main(sys.argv)
